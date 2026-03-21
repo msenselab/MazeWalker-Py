@@ -21,6 +21,25 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pywalker.maz_parser import parse_maz, resolve_assets, MazeData
 
+# Track all scene entities for cleanup between trials
+_scene_entities = []
+
+
+def _track(entity):
+    """Register an entity for later cleanup."""
+    _scene_entities.append(entity)
+    return entity
+
+
+def clear_maze_scene():
+    """Destroy all maze entities (walls, floor, objects, skybox). Call between trials."""
+    for e in _scene_entities:
+        try:
+            destroy(e)
+        except Exception:
+            pass
+    _scene_entities.clear()
+
 
 def build_skybox(skybox_texture_path: Path):
     """
@@ -36,7 +55,7 @@ def build_skybox(skybox_texture_path: Path):
     if not skybox_texture_path.exists() or skybox_texture_path.stat().st_size == 0:
         print(f"  [skip] Skybox texture missing: {skybox_texture_path.name}")
         # Fallback: solid color sky
-        Sky(color=color.rgb(135, 206, 235))
+        _track(Sky(color=color.rgb(135, 206, 235)))
         return
 
     img = Image.open(skybox_texture_path)
@@ -59,11 +78,11 @@ def build_skybox(skybox_texture_path: Path):
 
     tex = load_texture(name='sky_panorama', path=str(tmp_dir))
     if tex:
-        Sky(texture=tex)
+        _track(Sky(texture=tex))
         print(f"  Skybox loaded from {skybox_texture_path.name}")
     else:
         print(f"  [warn] Failed to load skybox panorama, using solid color")
-        Sky(color=color.rgb(135, 206, 235))
+        _track(Sky(color=color.rgb(135, 206, 235)))
 
 
 def load_textures(maze_data: MazeData) -> dict:
@@ -165,7 +184,7 @@ def wall_from_vertices(v, texture, wall_color):
         )
 
     # Front face (with collider for collision detection)
-    Entity(
+    _track(Entity(
         model='quad',
         texture=texture,
         color=col,
@@ -174,9 +193,9 @@ def wall_from_vertices(v, texture, wall_color):
         rotation_y=angle_y,
         unlit=True,
         collider='box',
-    )
+    ))
     # Back face (visual only, no collider needed)
-    Entity(
+    _track(Entity(
         model='quad',
         texture=texture,
         color=col,
@@ -184,7 +203,7 @@ def wall_from_vertices(v, texture, wall_color):
         scale=(width, height),
         rotation_y=angle_y + 180,
         unlit=True,
-    )
+    ))
 
 
 def build_curved_wall(cw, texture, wall_color):
@@ -204,8 +223,8 @@ def build_curved_wall(cw, texture, wall_color):
         )
 
     mesh = Mesh(vertices=verts, triangles=cw.indices, mode='triangle')
-    e = Entity(model=mesh, texture=texture, color=col, unlit=True)
-    e.collider = 'mesh'  # collision from triangle mesh
+    e = _track(Entity(model=mesh, texture=texture, color=col, unlit=True))
+    e.collider = 'mesh'
 
     # Back faces (reverse winding for double-sided, visual only)
     back_tris = []
@@ -213,7 +232,7 @@ def build_curved_wall(cw, texture, wall_color):
         if i + 2 < len(cw.indices):
             back_tris.extend([cw.indices[i], cw.indices[i+2], cw.indices[i+1]])
     mesh_back = Mesh(vertices=verts, triangles=back_tris, mode='triangle')
-    Entity(model=mesh_back, texture=texture, color=col, unlit=True)
+    _track(Entity(model=mesh_back, texture=texture, color=col, unlit=True))
 
 
 def build_maze_scene(maze_data: MazeData):
@@ -248,7 +267,7 @@ def build_maze_scene(maze_data: MazeData):
         sx = max(xs) - min(xs)
         sz = max(zs) - min(zs)
         floor_tex = textures.get(floor.texture_id)
-        Entity(
+        _track(Entity(
             model='quad',
             texture=floor_tex,
             color=color.white if floor_tex else color.rgb(100, 160, 80),
@@ -258,7 +277,7 @@ def build_maze_scene(maze_data: MazeData):
             texture_scale=(sx, sz) if floor_tex else (1, 1),
             unlit=True,
             collider='box',
-        )
+        ))
 
     # --- Pre-load unique OBJ models → (mesh, normalize_factor, min_y) ---
     loaded_models = {}  # model_id -> (mesh, normalize_factor, min_y)
@@ -277,16 +296,15 @@ def build_maze_scene(maze_data: MazeData):
         mdl, norm, min_y = loaded_models.get(sobj.model_id, (None, 1.0, 0.0))
         if mdl is not None:
             s = sobj.scale * norm
-            # Offset Y so model bottom sits at the specified position
             y_offset = -min_y * s
-            Entity(
+            _track(Entity(
                 model=mdl,
                 color=color.white,
                 scale=s,
                 position=(sobj.position.x, sobj.position.y + y_offset, sobj.position.z),
                 rotation=(sobj.rotation.x, sobj.rotation.y, sobj.rotation.z),
                 unlit=True,
-            )
+            ))
 
     # --- Dynamic objects (collectibles) ---
     collectibles = []  # list of (entity, dobj) for proximity checking
@@ -301,22 +319,22 @@ def build_maze_scene(maze_data: MazeData):
         if mdl is not None:
             s = dobj.scale * norm
             y_offset = -min_y * s
-            e = Entity(
+            e = _track(Entity(
                 model=mdl,
                 color=color.white,
                 scale=s,
                 position=(dobj.position.x, dobj.position.y + y_offset, dobj.position.z),
                 rotation=(dobj.rotation.x, dobj.rotation.y, dobj.rotation.z),
                 unlit=True,
-            )
+            ))
         else:
-            e = Entity(
+            e = _track(Entity(
                 model='sphere',
                 color=color.yellow,
                 scale=dobj.scale * 0.5,
                 position=(dobj.position.x, dobj.position.y + 0.3, dobj.position.z),
                 unlit=True,
-            )
+            ))
         if dobj.points_granted > 0:
             collectibles.append((e, dobj))
 
@@ -340,11 +358,11 @@ def build_maze_scene(maze_data: MazeData):
         dz = cz - start_pos[2]
         start_angle = math.degrees(math.atan2(dx, dz))
 
-    player = FirstPersonController(
+    player = _track(FirstPersonController(
         position=start_pos,
         speed=maze_data.settings.move_speed,
         mouse_sensitivity=UVec3(40, 40, 0),
-    )
+    ))
     player.height = 1.0           # camera at Y = -1 + 1 = 0 (mid-wall)
     player.camera_pivot.y = 1.0   # update the already-created pivot
     player.rotation_y = start_angle

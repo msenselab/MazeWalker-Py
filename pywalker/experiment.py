@@ -1,251 +1,295 @@
 """
-Proof-of-concept: PsychoPy + Ursina coexistence for maze experiments.
+Trial-sequenced maze experiment using Ursina.
 
-Flow:
-  1. PsychoPy shows instruction screen, sends EEG trigger
-  2. PsychoPy window closes
-  3. Ursina opens 3D maze for navigation
-  4. After maze ends (ESC), Ursina closes
-  5. PsychoPy reopens for feedback / next trial
-
-EEG triggers:
-  - Uses serial port (pyserial) or parallel port when available
-  - Falls back to console logging for testing without hardware
+Presents multiple mazes in randomized order with repeats.
+All trials run within a single Ursina app instance, with
+between-trial screens (instructions, fixation, feedback) shown
+as Ursina Text overlays.
 
 Usage:
-  .venv/bin/python pywalker/experiment.py maze/Maze220925.maz
+  .venv/bin/python pywalker/experiment.py maze/Maze220925.maz maze/Maze260925.maz
+  .venv/bin/python pywalker/experiment.py maze/Maze220925.maz --repeats 2
 """
 
 import sys
 import os
+import math
+import random
 import time as pytime
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
-# ---------------------------------------------------------------------------
-# EEG Trigger abstraction
-# ---------------------------------------------------------------------------
-
-class TriggerPort:
-    """Abstract trigger interface. Sends integer codes to EEG system."""
-
-    def send(self, code: int):
-        raise NotImplementedError
-
-
-class SerialTrigger(TriggerPort):
-    """Send triggers via serial port (e.g., USB-to-serial adapter)."""
-
-    def __init__(self, port='/dev/tty.usbserial', baudrate=115200):
-        import serial
-        self.ser = serial.Serial(port, baudrate, timeout=0.1)
-
-    def send(self, code: int):
-        self.ser.write(bytes([code]))
-        print(f"[SERIAL] Trigger: {code}")
-
-
-class ParallelTrigger(TriggerPort):
-    """Send triggers via parallel port (psychopy.parallel)."""
-
-    def __init__(self, address=0x0378):
-        from psychopy import parallel
-        self.port = parallel.ParallelPort(address=address)
-
-    def send(self, code: int):
-        self.port.setData(code)
-        pytime.sleep(0.005)  # 5ms pulse
-        self.port.setData(0)
-        print(f"[PARALLEL] Trigger: {code}")
-
-
-class ConsoleTrigger(TriggerPort):
-    """Fallback: print trigger codes to console for testing."""
-
-    def send(self, code: int):
-        print(f"[TRIGGER] code={code} t={pytime.time():.3f}")
-
-
-def get_trigger(method='console', **kwargs) -> TriggerPort:
-    """Factory for trigger ports."""
-    if method == 'serial':
-        return SerialTrigger(**kwargs)
-    elif method == 'parallel':
-        return ParallelTrigger(**kwargs)
-    else:
-        return ConsoleTrigger()
+from ursina import (
+    Ursina, Entity, Text,
+    color, window, application, camera,
+    held_keys, destroy, invoke,
+)
+from pywalker.maz_parser import parse_maz, resolve_assets
+from pywalker.maze_renderer import build_maze_scene, clear_maze_scene, load_model
 
 
 # ---------------------------------------------------------------------------
-# Trigger codes (customize for your EEG setup)
+# Experiment states
 # ---------------------------------------------------------------------------
-TRIG_EXPERIMENT_START = 1
-TRIG_INSTRUCTIONS_ON = 10
-TRIG_MAZE_START = 20
-TRIG_MAZE_END = 21
-TRIG_FEEDBACK_ON = 30
-TRIG_EXPERIMENT_END = 99
+STATE_INSTRUCTIONS = 'instructions'
+STATE_FIXATION = 'fixation'
+STATE_MAZE = 'maze'
+STATE_FEEDBACK = 'feedback'
+STATE_DONE = 'done'
 
 
-# ---------------------------------------------------------------------------
-# PsychoPy phases
-# ---------------------------------------------------------------------------
+class Experiment(Entity):
+    """
+    Manages the trial sequence within a single Ursina app.
 
-def show_instructions(trigger: TriggerPort, message: str = ""):
-    """Show instruction screen using PsychoPy. Returns when participant presses SPACE."""
-    from psychopy import visual, event, core
+    Flow per trial:
+      INSTRUCTIONS → FIXATION → MAZE → FEEDBACK → (next trial or DONE)
+    """
 
-    win = visual.Window(
-        size=(800, 600),
-        fullscr=False,
-        color='black',
-        title='Maze Experiment - Instructions',
-    )
+    def __init__(self, maze_files: list[str], repeats: int = 1, **kwargs):
+        super().__init__(**kwargs)
 
-    if not message:
-        message = (
-            "Welcome to the Maze Experiment!\n\n"
-            "Use W/A/S/D to walk through the maze.\n"
-            "Use mouse to look around.\n"
-            "Press ESC to end the maze trial.\n\n"
-            "Press SPACE to start."
+        # Build trial list: each maze repeated, then shuffled
+        self.trial_list = maze_files * repeats
+        random.shuffle(self.trial_list)
+
+        self.trial_index = 0
+        self.state = STATE_INSTRUCTIONS
+        self.player = None
+        self.collectibles = []
+        self.maze_data = None
+
+        # Timing
+        self.trial_start_time = 0
+        self.state_start_time = 0
+        self.trial_log = []  # list of dicts
+
+        # HUD elements (persistent across states)
+        self.message_text = Text(
+            text='',
+            origin=(0, 0),
+            scale=1.5,
+            color=color.white,
+        )
+        self.score_text = Text(
+            text='',
+            position=(-0.85, 0.45),
+            scale=1.5,
+            color=color.yellow,
+        )
+        self.info_text = Text(
+            text='',
+            position=(-0.85, 0.40),
+            scale=1,
+            color=color.white,
         )
 
-    text = visual.TextStim(
-        win, text=message,
-        color='white', height=0.06, wrapWidth=1.5,
-    )
+        # Points state
+        self.points = 0
+        self.exit_threshold = 0
+        self.completed = False
 
-    trigger.send(TRIG_INSTRUCTIONS_ON)
+        # Start
+        print(f"\n=== Experiment: {len(self.trial_list)} trials ===")
+        print(f"  Mazes: {maze_files}")
+        print(f"  Repeats: {repeats}")
+        print(f"  Order: {[Path(f).stem for f in self.trial_list]}")
+        self._show_instructions()
 
-    text.draw()
-    win.flip()
+    def _show_instructions(self):
+        """Show pre-trial instructions."""
+        self.state = STATE_INSTRUCTIONS
+        self.state_start_time = pytime.time()
+        trial_num = self.trial_index + 1
+        total = len(self.trial_list)
+        maze_name = Path(self.trial_list[self.trial_index]).stem
 
-    event.waitKeys(keyList=['space'])
+        self.message_text.text = (
+            f'Trial {trial_num} / {total}\n'
+            f'Maze: {maze_name}\n\n'
+            f'Collect all stars!\n'
+            f'WASD to move, mouse to look\n\n'
+            f'Press SPACE to start'
+        )
+        self.score_text.text = ''
+        self.info_text.text = ''
 
-    win.close()
-    core.wait(0.3)  # brief pause for GL context cleanup
+    def _show_fixation(self):
+        """Show fixation cross before trial starts."""
+        self.state = STATE_FIXATION
+        self.state_start_time = pytime.time()
+        self.message_text.text = '+'
+        self.message_text.scale = 3
+        # Auto-advance after 1 second
+        invoke(self._start_maze, delay=1.0)
 
+    def _start_maze(self):
+        """Load and start a maze trial."""
+        self.state = STATE_MAZE
+        self.message_text.text = ''
+        self.message_text.scale = 1.5
 
-def show_feedback(trigger: TriggerPort, maze_duration: float):
-    """Show feedback screen using PsychoPy after maze completion."""
-    from psychopy import visual, event, core
+        maz_file = self.trial_list[self.trial_index]
+        print(f"\n--- Trial {self.trial_index + 1}: {Path(maz_file).stem} ---")
 
-    win = visual.Window(
-        size=(800, 600),
-        fullscr=False,
-        color='black',
-        title='Maze Experiment - Feedback',
-    )
+        # Parse and build scene
+        self.maze_data = parse_maz(maz_file)
+        resolve_assets(self.maze_data, maz_file)
+        self.player, self.collectibles = build_maze_scene(self.maze_data)
 
-    trigger.send(TRIG_FEEDBACK_ON)
+        # Reset game state
+        self.points = 0
+        self.exit_threshold = self.maze_data.settings.exit_threshold
+        self.completed = False
+        self.trial_start_time = pytime.time()
 
-    text = visual.TextStim(
-        win,
-        text=(
-            f"Maze completed!\n\n"
-            f"Time: {maze_duration:.1f} seconds\n\n"
-            "Press SPACE to continue or Q to quit."
-        ),
-        color='white', height=0.06, wrapWidth=1.5,
-    )
+        self.score_text.text = f'Stars: 0 / {self.exit_threshold}'
 
-    text.draw()
-    win.flip()
+        if self.maze_data.settings.start_message:
+            self.message_text.text = self.maze_data.settings.start_message
+            invoke(setattr, self.message_text, 'text', '', delay=2.0)
 
-    keys = event.waitKeys(keyList=['space', 'q'])
-    win.close()
-    core.wait(0.3)
+    def _show_feedback(self, duration: float):
+        """Show post-trial feedback."""
+        self.state = STATE_FEEDBACK
+        self.state_start_time = pytime.time()
 
-    return 'q' not in keys
+        trial_num = self.trial_index + 1
+        status = 'Complete!' if self.completed else 'Time up'
+        self.message_text.text = (
+            f'Trial {trial_num} — {status}\n'
+            f'Stars: {self.points} / {self.exit_threshold}\n'
+            f'Time: {duration:.1f}s\n\n'
+            f'Press SPACE to continue'
+        )
+        self.score_text.text = ''
+        self.info_text.text = ''
 
+        # Log trial
+        self.trial_log.append({
+            'trial': trial_num,
+            'maze': Path(self.trial_list[self.trial_index]).stem,
+            'duration': duration,
+            'points': self.points,
+            'completed': self.completed,
+        })
 
-# ---------------------------------------------------------------------------
-# Ursina maze phase
-# ---------------------------------------------------------------------------
+    def _end_trial(self):
+        """Clean up current maze and advance."""
+        clear_maze_scene()
+        self.player = None
+        self.collectibles = []
+        self.trial_index += 1
 
-def run_maze_trial(maz_filepath: str, trigger: TriggerPort) -> float:
-    """
-    Run a single maze trial in Ursina.
+        if self.trial_index < len(self.trial_list):
+            self._show_instructions()
+        else:
+            self._show_done()
 
-    Returns the duration in seconds.
-    """
-    from pywalker.maz_parser import parse_maz
-    from ursina import (
-        Ursina, Entity, Mesh, Vec3 as UVec3, Text,
-        color, camera, window, application,
-        held_keys, time, invoke, destroy,
-    )
-    from pywalker.maze_renderer import (
-        build_maze_scene,
-    )
+    def _show_done(self):
+        """Show experiment complete screen."""
+        self.state = STATE_DONE
+        summary = '\n'.join(
+            f'  {t["trial"]}. {t["maze"]}: {t["points"]}pts, {t["duration"]:.1f}s'
+            for t in self.trial_log
+        )
+        self.message_text.text = (
+            f'Experiment Complete!\n\n'
+            f'{summary}\n\n'
+            f'Press ESC to exit'
+        )
+        print('\n=== Experiment Complete ===')
+        for t in self.trial_log:
+            print(f'  Trial {t["trial"]}: {t["maze"]} — {t["points"]}pts, {t["duration"]:.1f}s')
 
-    maze_data = parse_maz(maz_filepath)
+    def update(self):
+        # --- Instructions: wait for SPACE ---
+        if self.state == STATE_INSTRUCTIONS:
+            if held_keys['space']:
+                self._show_fixation()
 
-    app = Ursina(title='Maze Trial', borderless=False, size=(1024, 768))
-    window.color = color.rgb(135, 206, 235)
+        # --- Fixation: auto-advances via invoke ---
+        elif self.state == STATE_FIXATION:
+            pass
 
-    player = build_maze_scene(maze_data)
+        # --- Maze: game loop ---
+        elif self.state == STATE_MAZE:
+            # Collectible proximity check
+            for item in self.collectibles[:]:
+                entity, dobj = item
+                dx = self.player.x - entity.x
+                dz = self.player.z - entity.z
+                dist = math.sqrt(dx * dx + dz * dz)
+                if dist < dobj.trigger_radius:
+                    self.points += dobj.points_granted
+                    self.score_text.text = f'Stars: {self.points} / {self.exit_threshold}'
+                    destroy(entity)
+                    self.collectibles.remove(item)
+                    print(f'  Collected! {self.points}/{self.exit_threshold}')
 
-    # HUD
-    pos_text = Text(text='', position=(-0.85, 0.45), scale=1)
-    timer_text = Text(text='', position=(0.65, 0.45), scale=1.2)
+                    if self.points >= self.exit_threshold:
+                        self.completed = True
+                        self.score_text.text = f'COMPLETE! All {self.exit_threshold} Stars!'
+                        self.score_text.color = color.lime
+                        duration = pytime.time() - self.trial_start_time
+                        # Brief delay then show feedback
+                        invoke(self._end_maze_with_feedback, duration, delay=1.5)
 
-    trigger.send(TRIG_MAZE_START)
-    start_time = pytime.time()
+            # HUD
+            if self.player:
+                self.info_text.text = (
+                    f'x={self.player.x:.1f}  z={self.player.z:.1f}  '
+                    f'angle={self.player.rotation_y:.0f}'
+                )
 
-    # Track state within closure
-    state = {'running': True}
+            # ESC during maze = skip trial
+            if held_keys['escape']:
+                duration = pytime.time() - self.trial_start_time
+                self._end_maze_with_feedback(duration)
 
-    original_update = player.update.__func__ if hasattr(player.update, '__func__') else None
+        # --- Feedback: wait for SPACE ---
+        elif self.state == STATE_FEEDBACK:
+            if held_keys['space']:
+                self._end_trial()
 
-    def custom_update(self_player):
-        if original_update:
-            original_update(self_player)
-        elapsed = pytime.time() - start_time
-        pos_text.text = f'x={self_player.x:.1f}  z={self_player.z:.1f}'
-        timer_text.text = f'{elapsed:.1f}s'
+        # --- Done: wait for ESC ---
+        elif self.state == STATE_DONE:
+            if held_keys['escape']:
+                application.quit()
 
-    import types
-    player.update = types.MethodType(custom_update, player)
+    def _end_maze_with_feedback(self, duration):
+        """Transition from maze to feedback."""
+        if self.state != STATE_MAZE:
+            return  # guard against double-invoke
+        clear_maze_scene()
+        self.player = None
+        self.score_text.color = color.yellow
+        self._show_feedback(duration)
 
-    app.run()
-
-    duration = pytime.time() - start_time
-    trigger.send(TRIG_MAZE_END)
-
-    return duration
-
-
-# ---------------------------------------------------------------------------
-# Main experiment loop
-# ---------------------------------------------------------------------------
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python experiment.py <file.maz> [trigger_method]")
-        print("  trigger_method: console (default), serial, parallel")
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(description='Maze experiment with trial sequencing')
+    parser.add_argument('mazes', nargs='+', help='One or more .maz files')
+    parser.add_argument('--repeats', type=int, default=2, help='Number of repetitions (default: 2)')
+    parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility')
+    args = parser.parse_args()
 
-    maz_file = sys.argv[1]
-    trigger_method = sys.argv[2] if len(sys.argv) > 2 else 'console'
+    if args.seed is not None:
+        random.seed(args.seed)
 
-    trigger = get_trigger(trigger_method)
-    trigger.send(TRIG_EXPERIMENT_START)
+    app = Ursina(title='Maze Experiment', borderless=False, size=(1024, 768))
+    window.color = color.rgb(30, 30, 30)  # dark background between trials
+    window.fps_counter.enabled = True
 
-    # --- Phase 1: Instructions (PsychoPy) ---
-    show_instructions(trigger)
+    from ursina import mouse
+    mouse.locked = False
+    mouse.visible = True
 
-    # --- Phase 2: Maze navigation (Ursina) ---
-    duration = run_maze_trial(maz_file, trigger)
-
-    # --- Phase 3: Feedback (PsychoPy) ---
-    cont = show_feedback(trigger, duration)
-
-    trigger.send(TRIG_EXPERIMENT_END)
-    print(f"\nExperiment finished. Maze duration: {duration:.1f}s")
+    Experiment(maze_files=args.mazes, repeats=args.repeats)
+    app.run()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
