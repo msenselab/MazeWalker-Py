@@ -1,0 +1,4 @@
+ursina>=7.0.0
+psychopy
+pyserial
+pillow
