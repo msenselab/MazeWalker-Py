@@ -369,6 +369,45 @@ def build_maze_scene(maze_data: MazeData):
     player.gravity = 0            # flat maze, no falling
     player.cursor.visible = False
 
+    # --- Gamepad support (Xbox / generic controller) ---
+    # Ursina's gamepad module maps stick axes to held_keys.
+    # We inject them into WASD keys so FirstPersonController picks them up.
+    from ursina import time as ursina_time
+    STICK_DEADZONE = 0.15
+    LOOK_SPEED = 2.0
+
+    _original_update = player.update
+
+    def _gamepad_update():
+        # Left stick → movement (maps to w/a/s/d held_keys)
+        lx = held_keys.get('gamepad left stick x', 0)
+        ly = held_keys.get('gamepad left stick y', 0)
+        if abs(lx) > STICK_DEADZONE or abs(ly) > STICK_DEADZONE:
+            move_dir = (
+                player.forward * ly
+                + player.right * lx
+            ).normalized()
+            from ursina import raycast, Vec3
+            pos = player.position + Vec3(0, 1, 0)
+            if not raycast(pos, move_dir, distance=0.5,
+                           traverse_target=player.traverse_target,
+                           ignore=player.ignore_list).hit:
+                player.position += move_dir * ursina_time.dt * player.speed
+
+        # Right stick → look (yaw + pitch)
+        rx = held_keys.get('gamepad right stick x', 0)
+        ry = held_keys.get('gamepad right stick y', 0)
+        if abs(rx) > STICK_DEADZONE:
+            player.rotation_y += rx * LOOK_SPEED
+        if abs(ry) > STICK_DEADZONE:
+            from ursina import clamp
+            player.camera_pivot.rotation_x -= ry * LOOK_SPEED
+            player.camera_pivot.rotation_x = clamp(player.camera_pivot.rotation_x, -90, 90)
+
+        _original_update()
+
+    player.update = _gamepad_update
+
     # --- Skybox ---
     skybox_path = maze_data.image_paths.get(maze_data.settings.skybox_id)
     if skybox_path is not None:

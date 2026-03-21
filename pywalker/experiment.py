@@ -101,6 +101,7 @@ class Experiment(Entity):
         """Show pre-trial instructions."""
         self.state = STATE_INSTRUCTIONS
         self.state_start_time = pytime.time()
+        self.message_text.scale = 1.5
         trial_num = self.trial_index + 1
         total = len(self.trial_list)
         maze_name = Path(self.trial_list[self.trial_index]).stem
@@ -154,6 +155,7 @@ class Experiment(Entity):
         """Show post-trial feedback."""
         self.state = STATE_FEEDBACK
         self.state_start_time = pytime.time()
+        self.message_text.scale = 1.5
 
         trial_num = self.trial_index + 1
         status = 'Complete!' if self.completed else 'Time up'
@@ -190,6 +192,7 @@ class Experiment(Entity):
     def _show_done(self):
         """Show experiment complete screen."""
         self.state = STATE_DONE
+        self.message_text.scale = 1.5
         summary = '\n'.join(
             f'  {t["trial"]}. {t["maze"]}: {t["points"]}pts, {t["duration"]:.1f}s'
             for t in self.trial_log
@@ -258,12 +261,29 @@ class Experiment(Entity):
             if held_keys['escape']:
                 application.quit()
 
+    def _reset_to_menu(self):
+        """Reset window state after maze ends (camera, mouse, background)."""
+        from ursina import mouse, scene
+        # Restore camera to default (unparent from destroyed player)
+        camera.parent = scene
+        camera.position = (0, 0, 0)
+        camera.rotation = (0, 0, 0)
+        # Unlock mouse for menu screens
+        mouse.locked = False
+        mouse.visible = True
+        # Dark background via Panda3D native clear color
+        try:
+            application.base.setBackgroundColor(0.12, 0.12, 0.12, 1)
+        except Exception:
+            pass
+
     def _end_maze_with_feedback(self, duration):
         """Transition from maze to feedback."""
         if self.state != STATE_MAZE:
             return  # guard against double-invoke
         clear_maze_scene()
         self.player = None
+        self._reset_to_menu()
         self.score_text.color = color.yellow
         self._show_feedback(duration)
 
@@ -280,8 +300,9 @@ def main():
         random.seed(args.seed)
 
     app = Ursina(title='Maze Experiment', borderless=False, size=(1024, 768))
-    window.color = color.rgb(30, 30, 30)  # dark background between trials
     window.fps_counter.enabled = True
+    # Set dark background via Panda3D native API
+    application.base.setBackgroundColor(0.12, 0.12, 0.12, 1)
 
     from ursina import mouse
     mouse.locked = False
