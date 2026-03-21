@@ -390,7 +390,7 @@ def run_maze(maz_filepath: str):
             text=maze_data.settings.start_message,
             origin=(0, 0),
             scale=1.5,
-            background=True,
+            color=color.white,
         )
         invoke(destroy, msg, delay=3)
 
@@ -421,14 +421,9 @@ def run_maze(maz_filepath: str):
                     # Check completion
                     if state['points'] >= exit_threshold and not state['completed']:
                         state['completed'] = True
-                        done_msg = Text(
-                            text='All Stars Collected!\nMission Complete!',
-                            origin=(0, 0),
-                            scale=2.5,
-                            color=color.yellow,
-                            background=True,
-                        )
-                        score_text.text = f'Stars: {state["points"]} / {exit_threshold}  COMPLETE!'
+                        score_text.text = f'COMPLETE! All {exit_threshold} Stars Collected!'
+                        score_text.scale = 2
+                        score_text.color = color.lime
                         print('  === Mission Complete! ===')
 
             # --- HUD update ---
