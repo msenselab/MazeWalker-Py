@@ -124,6 +124,21 @@ def _obj_bounds(obj_path: Path) -> tuple:
     return extent, min(ys)
 
 
+def _fix_mtl_tabs(obj_path: Path):
+    """Fix tab-separated values in MTL files that crash Ursina's OBJ parser."""
+    with open(obj_path) as f:
+        for line in f:
+            if line.strip().startswith('mtllib'):
+                mtl_name = line.strip().split(None, 1)[1]
+                mtl_path = obj_path.parent / mtl_name
+                if mtl_path.exists():
+                    text = mtl_path.read_text()
+                    if '\t' in text:
+                        mtl_path.write_text(text.replace('\t', ' '))
+                        print(f"  [fix] Replaced tabs in {mtl_name}")
+                break
+
+
 def load_obj_model(model_path: Path):
     """
     Load an OBJ model and return (mesh, normalize_factor, min_y).
@@ -132,6 +147,7 @@ def load_obj_model(model_path: Path):
     min_y is the model's lowest Y in native coords (for ground placement).
     """
     try:
+        _fix_mtl_tabs(model_path)  # fix tab-separated MTL values
         model = load_model(
             name=model_path.stem,
             path=Path(model_path.parent),
@@ -212,6 +228,7 @@ def build_curved_wall(cw, texture, wall_color):
         return
 
     verts = [UVec3(v.x, v.y, v.z) for v in cw.geometry_verts]
+    uvs = cw.geometry_uvs if cw.geometry_uvs else None
 
     if texture is not None:
         col = color.white
@@ -222,16 +239,16 @@ def build_curved_wall(cw, texture, wall_color):
             int(wall_color.b * 160),
         )
 
-    mesh = Mesh(vertices=verts, triangles=cw.indices, mode='triangle')
+    mesh = Mesh(vertices=verts, uvs=uvs, triangles=cw.indices, mode='triangle')
     e = _track(Entity(model=mesh, texture=texture, color=col, unlit=True))
     e.collider = 'mesh'
 
-    # Back faces (reverse winding for double-sided, visual only)
+    # Back faces (reverse winding for double-sided)
     back_tris = []
     for i in range(0, len(cw.indices), 3):
         if i + 2 < len(cw.indices):
             back_tris.extend([cw.indices[i], cw.indices[i+2], cw.indices[i+1]])
-    mesh_back = Mesh(vertices=verts, triangles=back_tris, mode='triangle')
+    mesh_back = Mesh(vertices=verts, uvs=uvs, triangles=back_tris, mode='triangle')
     _track(Entity(model=mesh_back, texture=texture, color=col, unlit=True))
 
 

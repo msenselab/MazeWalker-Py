@@ -39,6 +39,7 @@ class CurvedWall:
     id: int = 0
     label: str = ""
     geometry_verts: list = field(default_factory=list)  # list of Vec3 (all vertices)
+    geometry_uvs: list = field(default_factory=list)    # list of (u, v) per vertex
     indices: list = field(default_factory=list)          # triangle indices
     texture_id: int = 0
     color: Color = field(default_factory=Color)
@@ -252,8 +253,9 @@ def parse_maz(filepath: str) -> MazeData:
                 # But examining data: pairs of (top, bottom) vertices
                 # Format: x,y,z,texX,texY repeated
                 for i in range(0, len(vals), 5):
-                    if i + 2 < len(vals):
+                    if i + 4 < len(vals):
                         curved.geometry_verts.append(Vec3(vals[i], vals[i+1], vals[i+2]))
+                        curved.geometry_uvs.append((vals[i+3], vals[i+4]))
 
             # Indices: triangle vertex indices
             idx_el = cw.find("Indicies")  # note: typo in XML ("Indicies")
