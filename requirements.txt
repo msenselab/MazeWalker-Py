@@ -3,3 +3,4 @@ psychopy
 pyserial
 pillow
 pygame
+LabJackPython
