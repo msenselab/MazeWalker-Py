@@ -54,21 +54,31 @@ d.close()
 ## Usage in MazeWalker-Py
 
 ```python
-from pywalker.trigger import EEGTrigger
+from pywalker.trigger import EEGTrigger, star_trigger, TRIG_MAZE_START
 
-trigger = EEGTrigger(pulse_ms=2.0)
-trigger.send(10)   # send trigger value 10
+# 4-bit mode (default) for Turkey EEG system (4 DC ports, max value 15)
+trigger = EEGTrigger(pulse_ms=2.0, bits=4)
+
+# 8-bit mode for systems with 8 DC ports (max value 255)
+# trigger = EEGTrigger(pulse_ms=2.0, bits=8)
+
+trigger.send(TRIG_MAZE_START)   # send trigger value 2
+trigger.send(star_trigger(0))   # first star collected → code 3
 trigger.close()
 ```
 
 If no LabJack is connected, `EEGTrigger` falls back to console-only mode without crashing.
 
-## Trigger Codes
+## Trigger Codes (4-bit scheme)
+
+For systems with limited DC ports (e.g., Turkey EEG with 4 ports), use 4-bit mode (max value 15):
 
 | Code | Event |
 |------|-------|
 | 1    | Fixation onset |
-| 10   | Maze start |
-| 20+n | nth star collected |
-| 30   | Trial complete |
-| 31   | Trial ended (ESC) |
+| 2    | Maze start |
+| 3-10 | Star 1-8 collected (3 + star_index) |
+| 11   | Trial complete (all stars) |
+| 12   | Trial ended (ESC) |
+
+Use `star_trigger(index)` helper for star collection codes (0-indexed).
