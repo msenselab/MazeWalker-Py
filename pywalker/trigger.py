@@ -48,10 +48,10 @@ class EEGTrigger:
             self._device.configIO(FIOAnalog=0, EIOAnalog=0)
             # Set FIO0-FIO7 as output
             self._device.getFeedback(_u3.PortDirWrite(
-                Direction=[0xFF, 0, 0], UpdateMask=[0xFF, 0, 0]))
+                Direction=[0xFF, 0, 0], WriteMask=[0xFF, 0, 0]))
             # Reset to 0
             self._device.getFeedback(_u3.PortStateWrite(
-                State=[0, 0, 0], UpdateMask=[0xFF, 0, 0]))
+                State=[0, 0, 0], WriteMask=[0xFF, 0, 0]))
             print('[EEGTrigger] LabJack U3 connected')
         except Exception as e:
             print(f'[EEGTrigger] No LabJack found ({e}) — console mode')
@@ -66,17 +66,17 @@ class EEGTrigger:
         if self._silent or self._device is None:
             return
         self._device.getFeedback(_u3.PortStateWrite(
-            State=[value, 0, 0], UpdateMask=[0xFF, 0, 0]))
+            State=[value, 0, 0], WriteMask=[0xFF, 0, 0]))
         time.sleep(self.pulse_s)
         self._device.getFeedback(_u3.PortStateWrite(
-            State=[0, 0, 0], UpdateMask=[0xFF, 0, 0]))
+            State=[0, 0, 0], WriteMask=[0xFF, 0, 0]))
 
     def close(self):
         """Reset pins and close device."""
         if self._device:
             try:
                 self._device.getFeedback(_u3.PortStateWrite(
-                    State=[0, 0, 0], UpdateMask=[0xFF, 0, 0]))
+                    State=[0, 0, 0], WriteMask=[0xFF, 0, 0]))
                 self._device.close()
             except Exception:
                 pass
