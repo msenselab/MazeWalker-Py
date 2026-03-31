@@ -29,6 +29,7 @@ from ursina import (
 )
 from pywalker.maz_parser import parse_maz, resolve_assets
 from pywalker.maze_renderer import build_maze_scene, clear_maze_scene, load_model
+from pywalker.trigger import EEGTrigger, TRIG_FIXATION, TRIG_MAZE_START, TRIG_COLLECT_BASE, TRIG_TRIAL_COMPLETE, TRIG_TRIAL_ESCAPE
 
 # --- Gamepad confirm button (pygame, since Panda3D doesn't detect on macOS) ---
 import pygame
@@ -70,8 +71,9 @@ class Experiment(Entity):
       INSTRUCTIONS → FIXATION → MAZE → FEEDBACK → (next trial or DONE)
     """
 
-    def __init__(self, maze_files: list[str], repeats: int = 1, **kwargs):
+    def __init__(self, maze_files: list[str], repeats: int = 1, trigger: EEGTrigger = None, **kwargs):
         super().__init__(**kwargs)
+        self.trigger = trigger or EEGTrigger()
 
         # Build trial list: each maze repeated, then shuffled
         self.trial_list = maze_files * repeats
@@ -169,6 +171,7 @@ class Experiment(Entity):
         self.state_start_time = pytime.time()
         self.message_text.text = '+'
         self.message_text.scale = 2
+        self.trigger.send(TRIG_FIXATION)
         # Auto-advance after 1 second
         invoke(self._start_maze, delay=1.0)
 
@@ -193,6 +196,7 @@ class Experiment(Entity):
         self.trial_start_time = pytime.time()
 
         self.score_text.text = f'Stars: 0 / {self.exit_threshold}'
+        self.trigger.send(TRIG_MAZE_START)
 
         # Open trajectory file for appending during this trial
         self._traj_file = open(self.traj_csv_path, 'a', newline='')
@@ -288,6 +292,7 @@ class Experiment(Entity):
                     self.score_text.text = f'Stars: {self.points} / {self.exit_threshold}'
                     destroy(entity)
                     self.collectibles.remove(item)
+                    self.trigger.send(TRIG_COLLECT_BASE + self.points)
                     print(f'  Collected! {self.points}/{self.exit_threshold}')
                     # Log collection event
                     if self._traj_writer:
@@ -308,6 +313,7 @@ class Experiment(Entity):
                         self.score_text.text = f'COMPLETE! All {self.exit_threshold} Stars!'
                         self.score_text.color = color.lime
                         duration = pytime.time() - self.trial_start_time
+                        self.trigger.send(TRIG_TRIAL_COMPLETE)
                         # Brief delay then show feedback
                         invoke(self._end_maze_with_feedback, duration, delay=1.5)
 
@@ -334,6 +340,7 @@ class Experiment(Entity):
             # ESC during maze = skip trial
             if held_keys['escape']:
                 duration = pytime.time() - self.trial_start_time
+                self.trigger.send(TRIG_TRIAL_ESCAPE)
                 self._end_maze_with_feedback(duration)
 
         # --- Feedback: wait for SPACE ---
@@ -404,8 +411,12 @@ def main():
     mouse.locked = False
     mouse.visible = True
 
-    Experiment(maze_files=args.mazes, repeats=args.repeats)
-    app.run()
+    trigger = EEGTrigger()
+    exp = Experiment(maze_files=args.mazes, repeats=args.repeats, trigger=trigger)
+    try:
+        app.run()
+    finally:
+        trigger.close()
 
 
 if __name__ == '__main__':
