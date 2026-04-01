@@ -356,6 +356,14 @@ class Experiment(Entity):
             if held_keys['escape']:
                 application.quit()
 
+    def input(self, key):
+        """Handle key events for debug LED."""
+        if self.state == STATE_MAZE:
+            if key == 'space':
+                self.trigger.led_on()
+            elif key == 'space up':
+                self.trigger.led_off()
+
     def _reset_to_menu(self):
         """Reset window state after maze ends (camera, mouse, background)."""
         from ursina import mouse, scene
