@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import u3; print\\(''u3 ok''\\)\")",
+      "Bash(python -c \"import ursina; print\\(''ursina ok''\\)\")",
+      "Bash(ls /c/Python*)",
+      "Read(//c/Users/10993/AppData/Local/Programs/Python//**)",
+      "Bash(/c/Users/10993/AppData/Local/Programs/Python/Python310/python.exe -c \"import u3; print\\(''u3 ok''\\)\")",
+      "Bash(/c/Users/10993/AppData/Local/Programs/Python/Python39/python.exe -c \"import u3; print\\(''u3 ok''\\)\")",
+      "Bash(python:*)",
+      "Bash(D:/MazeWalker-Py/maze/Scripts/pip install:*)",
+      "Bash(D:/MazeWalker-Py/maze/Scripts/python -m ipykernel install --user --name maze --display-name \"maze\" 2>&1)",
+      "Bash(D:/MazeWalker-Py/maze/Scripts/python -c \"import u3; import ursina; import pygame; import PIL; print\\('all ok'\\)\" 2>&1)"
+    ]
+  }
+}
