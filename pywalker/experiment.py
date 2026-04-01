@@ -338,13 +338,7 @@ class Experiment(Entity):
                         '',
                     ])
 
-            # Spacebar: hold ON while pressed, OFF on release (debug LED)
-            space_now = bool(held_keys['space'])
-            if space_now and not self._space_prev:
-                self.trigger.led_on()
-            elif not space_now and self._space_prev:
-                self.trigger.led_off()
-            self._space_prev = space_now
+            pass  # spacebar LED handled via input()
 
             # ESC during maze = skip trial
             if held_keys['escape']:
