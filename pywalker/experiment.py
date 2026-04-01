@@ -29,7 +29,7 @@ from ursina import (
 )
 from pywalker.maz_parser import parse_maz, resolve_assets
 from pywalker.maze_renderer import build_maze_scene, clear_maze_scene, load_model
-from pywalker.trigger import EEGTrigger, TRIG_FIXATION, TRIG_MAZE_START, TRIG_COLLECT_BASE, TRIG_TRIAL_COMPLETE, TRIG_TRIAL_ESCAPE
+from pywalker.trigger_debug import EEGTriggerDebug as EEGTrigger, TRIG_FIXATION, TRIG_MAZE_START, TRIG_COLLECT_BASE, TRIG_TRIAL_COMPLETE, TRIG_TRIAL_ESCAPE
 
 # --- Gamepad confirm button (pygame, since Panda3D doesn't detect on macOS) ---
 import pygame
@@ -84,6 +84,7 @@ class Experiment(Entity):
         self.player = None
         self.collectibles = []
         self.maze_data = None
+        self._space_prev = False  # for spacebar press detection
 
         # Timing
         self.trial_start_time = 0
@@ -336,6 +337,14 @@ class Experiment(Entity):
                         f'{self.player.rotation_y:.2f}',
                         '',
                     ])
+
+            # Spacebar: hold ON while pressed, OFF on release (debug LED)
+            space_now = bool(held_keys['space'])
+            if space_now and not self._space_prev:
+                self.trigger.led_on()
+            elif not space_now and self._space_prev:
+                self.trigger.led_off()
+            self._space_prev = space_now
 
             # ESC during maze = skip trial
             if held_keys['escape']:
