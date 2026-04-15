@@ -208,7 +208,7 @@ def build_maz_xml(n, h_walls, v_walls, star_cells, label=''):
     ET.SubElement(g, 'Speed', moveSpeed='3', turnSpeed='45')
     ET.SubElement(g, 'AmbientLight', r='1', g='1', b='1', intensity='0.6')
     ET.SubElement(g, 'StartMessage', enabled='True',
-                  message='Collect 3 Stars to complete the Maze!')
+                  message=f'Collect {NUM_STARS} Star{"s" if NUM_STARS != 1 else ""} to complete the Maze!')
     ET.SubElement(g, 'DefaultStartPosition', id='1')
     ET.SubElement(g, 'Timeout', enabled='False', message='', timeoutValue='0')
     ET.SubElement(g, 'PointOptions', exitThreshold=str(NUM_STARS),
@@ -309,6 +309,11 @@ def main():
                     help='Filename prefix (default: Maze)')
     args = ap.parse_args()
 
+    if args.num_stars < 1:
+        ap.error('--num-stars must be at least 1')
+    if args.num_stars > 4:
+        ap.error('--num-stars > 4 is unlikely to succeed on a 6x6 grid')
+
     global NUM_STARS, MIN_STAR_SEPARATION, MIN_STAR_DISTANCE
     NUM_STARS = args.num_stars
     if NUM_STARS == 1:
@@ -380,9 +385,9 @@ def main():
 
     # ── Summary ──────────────────────────────────────────────────────────
     m = statistics.mean(dists)
-    sd = statistics.stdev(dists)
+    sd  = statistics.stdev(dists)          if len(dists) >= 2          else 0.0
     sm = statistics.mean(all_star_dists)
-    ssd = statistics.stdev(all_star_dists)
+    ssd = statistics.stdev(all_star_dists) if len(all_star_dists) >= 2 else 0.0
     rej = (total_attempts - args.count) / total_attempts * 100
 
     print(f'\n══ Pool summary ══')
