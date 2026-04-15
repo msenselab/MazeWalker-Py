@@ -49,14 +49,33 @@ def build_skybox(skybox_texture_path: Path):
 
 
 def load_textures(maze_data: MazeData) -> dict:
-    """Return {texture_id: path_string} for resolved textures."""
+    """Load textures by temporarily setting asset_folder to Library dir."""
     textures = {}
-    for img_id, path in maze_data.image_paths.items():
-        if path.exists() and path.stat().st_size > 0:
-            textures[img_id] = str(path)
-            print(f"  [ok] Texture path: {path.name}")
-        else:
-            print(f"  [skip] Missing texture: {path.name}")
+    if not maze_data.image_paths:
+        return textures
+
+    # Pick Library dir from first resolved image path
+    first_path = next(iter(maze_data.image_paths.values()))
+    library_dir = first_path.parent
+
+    old_asset_folder = application.asset_folder
+    try:
+        application.asset_folder = library_dir
+        for img_id, path in maze_data.image_paths.items():
+            if not path.exists() or path.stat().st_size == 0:
+                print(f"  [skip] Missing texture: {path.name}")
+                continue
+            try:
+                tex = load_texture(path.name)
+                if tex:
+                    textures[img_id] = tex
+                    print(f"  [ok] Loaded texture: {path.name}")
+                else:
+                    print(f"  [warn] load_texture returned None: {path.name}")
+            except Exception as e:
+                print(f"  [warn] Failed to load texture {path.name}: {e}")
+    finally:
+        application.asset_folder = old_asset_folder
     return textures
 
 
@@ -104,7 +123,10 @@ def load_obj_model(model_path: Path):
     """
     try:
         _fix_mtl_tabs(model_path)  # fix tab-separated MTL values
-        model = load_model(str(model_path.with_suffix('')))
+        old_af = application.asset_folder
+        application.asset_folder = model_path.parent
+        model = load_model(model_path.stem)
+        application.asset_folder = old_af
         if model:
             extent, min_y = _obj_bounds(model_path)
             normalize = 1.0 / extent if extent > 0 else 1.0
@@ -283,7 +305,10 @@ def build_maze_scene(maze_data: MazeData):
         # Reload model per instance so destroying one doesn't affect others
         model_path = maze_data.model_paths.get(dobj.model_id)
         if model_path is not None:
-            mdl = load_model(str(model_path.with_suffix('')))
+            old_af = application.asset_folder
+            application.asset_folder = model_path.parent
+            mdl = load_model(model_path.stem)
+            application.asset_folder = old_af
         else:
             mdl = None
         _, norm, min_y = loaded_models.get(dobj.model_id, (None, 1.0, 0.0))
