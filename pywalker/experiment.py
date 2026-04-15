@@ -169,6 +169,7 @@ class Experiment(Entity):
 
         # Points state
         self.points = 0
+        self.stars_collected_count = 0
         self.exit_threshold = 0
         self.completed = False
 
@@ -240,6 +241,7 @@ class Experiment(Entity):
 
         # Reset game state
         self.points = 0
+        self.stars_collected_count = 0
         self.exit_threshold = self.maze_data.settings.exit_threshold
         self.completed = False
         self.trial_start_time = pytime.time()
@@ -280,7 +282,9 @@ class Experiment(Entity):
         # Log trial
         maze_name = Path(self.trial_list[self.trial_index]['maze_file']).stem
         self.trial_log.append({
-            'trial': self.trial_index + 1,
+            'trial': trial_in_block,
+            'block': trial['block'],
+            'condition': trial['condition'],
             'maze': maze_name,
             'duration': duration,
             'points': self.points,
@@ -337,7 +341,7 @@ class Experiment(Entity):
         self.state = STATE_DONE
         self.message_text.scale = 1
         summary = '\n'.join(
-            f'  {t["trial"]}. {t["maze"]}: {t["points"]}pts, {t["duration"]:.1f}s'
+            f'  B{t["block"]} T{t["trial"]}. [{t["condition"]}] {t["maze"]}: {t["points"]}pts, {t["duration"]:.1f}s'
             for t in self.trial_log
         )
         self.message_text.text = (
@@ -347,13 +351,17 @@ class Experiment(Entity):
         )
         print('\n=== Experiment Complete ===')
         for t in self.trial_log:
-            print(f'  Trial {t["trial"]}: {t["maze"]} — {t["points"]}pts, {t["duration"]:.1f}s')
+            print(f'  B{t["block"]} T{t["trial"]} [{t["condition"]}]: {t["maze"]} — {t["points"]}pts, {t["duration"]:.1f}s')
 
     def update(self):
         # --- Instructions: wait for SPACE ---
         if self.state == STATE_INSTRUCTIONS:
-            if confirm_pressed():
+            _cur = confirm_pressed()
+            if _cur and not self._space_prev and pytime.time() - self.state_start_time > 0.4:
+                self._space_prev = _cur
                 self._show_fixation()
+                return
+            self._space_prev = _cur
 
         # --- Fixation: auto-advances via invoke ---
         elif self.state == STATE_FIXATION:
@@ -369,11 +377,12 @@ class Experiment(Entity):
                 dist = math.sqrt(dx * dx + dz * dz)
                 if dist < dobj.trigger_radius:
                     self.points += dobj.points_granted
+                    self.stars_collected_count += 1
                     self.score_text.text = f'Stars: {self.points} / {self.exit_threshold}'
                     destroy(entity)
                     self.collectibles.remove(item)
                     condition = self.trial_list[self.trial_index]['condition']
-                    self.trigger.send(star_trigger(condition, self.points - 1))
+                    self.trigger.send(star_trigger(condition, self.stars_collected_count - 1))
                     print(f'  Collected! {self.points}/{self.exit_threshold}')
                     # Log collection event
                     if self._traj_writer:
@@ -421,21 +430,29 @@ class Experiment(Entity):
             pass  # spacebar LED handled via input()
 
             # ESC during maze = skip trial
-            if held_keys['escape']:
+            if held_keys['escape'] and self.state == STATE_MAZE:
                 duration = pytime.time() - self.trial_start_time
                 self.trigger.send(TRIG_TRIAL_ESCAPE)
                 self._end_maze_with_feedback(duration)
 
         # --- Feedback: wait for SPACE ---
         elif self.state == STATE_FEEDBACK:
-            if confirm_pressed():
+            _cur = confirm_pressed()
+            if _cur and not self._space_prev and pytime.time() - self.state_start_time > 0.4:
+                self._space_prev = _cur
                 self._end_trial()
+                return
+            self._space_prev = _cur
 
         # --- Block rest: wait for SPACE ---
         elif self.state == STATE_BLOCK_REST:
-            if confirm_pressed():
+            _cur = confirm_pressed()
+            if _cur and not self._space_prev and pytime.time() - self.state_start_time > 0.4:
+                self._space_prev = _cur
                 self.trigger.send(TRIG_BLOCK_REST_END)
                 self._show_instructions()
+                return
+            self._space_prev = _cur
 
         # --- Done: wait for ESC ---
         elif self.state == STATE_DONE:
