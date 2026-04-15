@@ -15,7 +15,7 @@ from pywalker.trigger import EEGTrigger
 
 PULSE_MS   = 2.0   # trigger pulse duration (ms)
 GAP_S      = 0.05   # gap between trigger and send-0
-INTERVAL_S = 0.3   # gap after send-0 before next trigger
+INTERVAL_S = 4   # gap after send-0 before next trigger
                    # total per step ≈ PULSE_MS/1000 + GAP_S + INTERVAL_S ≈ 500 ms
 BITS       = 4     # 4-bit mode: FIO0–FIO3, values 1–15
 

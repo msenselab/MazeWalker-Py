@@ -1,14 +1,13 @@
 """
 Trial-sequenced maze experiment using Ursina.
 
-Presents multiple mazes in randomized order with repeats.
-All trials run within a single Ursina app instance, with
-between-trial screens (instructions, fixation, feedback) shown
-as Ursina Text overlays.
+Runs 3 blocks x 6 trials (3 easy + 3 hard per block), randomized within each
+block. All trials run within a single Ursina app instance, with between-trial
+screens (instructions, fixation, feedback) shown as Ursina Text overlays.
 
 Usage:
-  .venv/bin/python pywalker/experiment.py maze/Maze220925.maz maze/Maze260925.maz
-  .venv/bin/python pywalker/experiment.py maze/Maze220925.maz --repeats 2
+  .venv/bin/python pywalker/experiment.py
+  .venv/bin/python pywalker/experiment.py --easy-dir path/to/easy --hard-dir path/to/hard
 """
 
 import sys
