@@ -1,0 +1,2 @@
+block,trial_in_block,condition,maze,duration_s,stars_collected,stars_total,completed
+1,1,hard,Hard039,10.948,0,3,False

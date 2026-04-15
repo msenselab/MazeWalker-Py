@@ -2,17 +2,21 @@
 Ursina-based 3D maze renderer.
 
 Loads a MazeData object (from maz_parser) and renders it as a walkable
-first-person 3D environment using Ursina (Panda3D wrapper).
+first-person 3D environment.
 
-Supports textured walls/floors and OBJ model loading.
+Template: D:/vr-tutorial/maze_explorer/maze_explorer.py
+  - cube walls with WALL_THICK, texture_scale for correct tiling
+  - DirectionalLight + AmbientLight (no unlit=True)
+  - camera_pivot.y=0.2, player at y=0 (walls span y=-1..+1)
+  - Sky(texture=...) for custom skybox
 """
 
 from ursina import (
-    Ursina, Entity, Vec3 as UVec3, Mesh,
-    color, window, application, load_model, load_texture,
-    held_keys, Text, invoke, destroy,
+    Entity, Vec3 as UVec3, color, camera, application, load_model, load_texture,
+    held_keys, Text, invoke, destroy, mouse, AmbientLight, DirectionalLight,
 )
 from ursina.prefabs.first_person_controller import FirstPersonController
+from ursina.prefabs.sky import Sky
 import math
 import sys
 import os
@@ -20,6 +24,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pywalker.maz_parser import parse_maz, resolve_assets, MazeData
+
+# Wall solid thickness (like maze_explorer WALL_THICK)
+WALL_THICK = 0.3
 
 # Track all scene entities for cleanup between trials
 _scene_entities = []
@@ -32,7 +39,7 @@ def _track(entity):
 
 
 def clear_maze_scene():
-    """Destroy all maze entities (walls, floor, objects, skybox). Call between trials."""
+    """Destroy all maze entities (walls, floor, lights, skybox, player). Call between trials."""
     for e in _scene_entities:
         try:
             destroy(e)
@@ -41,50 +48,47 @@ def clear_maze_scene():
     _scene_entities.clear()
 
 
-def build_skybox(skybox_texture_path: Path):
-    """Build sky — use Ursina built-in Sky() like ex5."""
-    from ursina import Sky
-    _track(Sky())
-    print("  Skybox: built-in sky")
+def _load_tex(path: Path) -> object:
+    """Load a texture from an absolute path via asset_folder swap."""
+    old = application.asset_folder
+    application.asset_folder = path.parent
+    tex = load_texture(path.name)
+    application.asset_folder = old
+    return tex
 
 
 def load_textures(maze_data: MazeData) -> dict:
-    """Load textures by temporarily setting asset_folder to Library dir."""
+    """Load all image assets; return {image_id: texture}."""
     textures = {}
-    if not maze_data.image_paths:
-        return textures
-
-    # Pick Library dir from first resolved image path
-    first_path = next(iter(maze_data.image_paths.values()))
-    library_dir = first_path.parent
-
-    old_asset_folder = application.asset_folder
-    try:
-        application.asset_folder = library_dir
-        for img_id, path in maze_data.image_paths.items():
-            if not path.exists() or path.stat().st_size == 0:
-                print(f"  [skip] Missing texture: {path.name}")
-                continue
-            try:
-                tex = load_texture(path.name)
-                if tex:
-                    textures[img_id] = tex
-                    print(f"  [ok] Loaded texture: {path.name}")
-                else:
-                    print(f"  [warn] load_texture returned None: {path.name}")
-            except Exception as e:
-                print(f"  [warn] Failed to load texture {path.name}: {e}")
-    finally:
-        application.asset_folder = old_asset_folder
+    for img_id, path in maze_data.image_paths.items():
+        if not path.exists():
+            print(f"  [skip] Missing file: {path}")
+            continue
+        tex = _load_tex(path)
+        if tex:
+            textures[img_id] = tex
+            print(f"  [ok] Loaded texture: {path.name}")
+        else:
+            print(f"  [warn] load_texture returned None: {path.name}")
     return textures
 
 
-def _obj_bounds(obj_path: Path) -> tuple:
-    """Read an OBJ file and return (max_extent, min_y).
+def _fix_mtl_tabs(obj_path: Path):
+    """Replace tab-separated values in MTL files (Ursina parser workaround)."""
+    with open(obj_path) as f:
+        for line in f:
+            if line.strip().startswith('mtllib'):
+                mtl_name = line.strip().split(None, 1)[1]
+                mtl_path = obj_path.parent / mtl_name
+                if mtl_path.exists():
+                    text = mtl_path.read_text()
+                    if '\t' in text:
+                        mtl_path.write_text(text.replace('\t', ' '))
+                break
 
-    max_extent: largest bounding box dimension (for normalization).
-    min_y: lowest Y coordinate (for placing model on the ground).
-    """
+
+def _obj_bounds(obj_path: Path) -> tuple:
+    """Return (max_extent, min_y) from OBJ vertex data."""
     xs, ys, zs = [], [], []
     with open(obj_path) as f:
         for line in f:
@@ -99,157 +103,92 @@ def _obj_bounds(obj_path: Path) -> tuple:
     return extent, min(ys)
 
 
-def _fix_mtl_tabs(obj_path: Path):
-    """Fix tab-separated values in MTL files that crash Ursina's OBJ parser."""
-    with open(obj_path) as f:
-        for line in f:
-            if line.strip().startswith('mtllib'):
-                mtl_name = line.strip().split(None, 1)[1]
-                mtl_path = obj_path.parent / mtl_name
-                if mtl_path.exists():
-                    text = mtl_path.read_text()
-                    if '\t' in text:
-                        mtl_path.write_text(text.replace('\t', ' '))
-                        print(f"  [fix] Replaced tabs in {mtl_name}")
-                break
-
-
 def load_obj_model(model_path: Path):
-    """
-    Load an OBJ model and return (mesh, normalize_factor, min_y).
-
-    normalize_factor scales the model so its max dimension = 1 unit.
-    min_y is the model's lowest Y in native coords (for ground placement).
-    """
+    """Load OBJ; return (mesh, normalize_factor, min_y) or (None, 1.0, 0.0)."""
     try:
-        _fix_mtl_tabs(model_path)  # fix tab-separated MTL values
-        old_af = application.asset_folder
+        _fix_mtl_tabs(model_path)
+        old = application.asset_folder
         application.asset_folder = model_path.parent
-        model = load_model(model_path.stem)
-        application.asset_folder = old_af
-        if model:
+        mdl = load_model(model_path.stem)
+        application.asset_folder = old
+        if mdl:
             extent, min_y = _obj_bounds(model_path)
-            normalize = 1.0 / extent if extent > 0 else 1.0
-            print(f"  [ok] Loaded model: {model_path.name} (extent={extent:.1f}, min_y={min_y:.1f}, norm={normalize:.4f})")
-            return model, normalize, min_y
-        else:
-            print(f"  [warn] load_model returned None: {model_path.name}")
-            return None, 1.0, 0.0
+            norm = 1.0 / extent if extent > 0 else 1.0
+            print(f"  [ok] Loaded model: {model_path.name} (norm={norm:.4f})")
+            return mdl, norm, min_y
+        print(f"  [warn] load_model returned None: {model_path.name}")
+        return None, 1.0, 0.0
     except Exception as e:
         print(f"  [warn] Failed to load model {model_path.name}: {e}")
         return None, 1.0, 0.0
 
 
-def wall_from_vertices(v, texture, wall_color):
-    """
-    Create a wall Entity from 4 vertices using Ursina's 'quad' model.
-
-    MazeSuite wall vertex order:
-      MzPoint1 (top-right), MzPoint2 (bottom-right),
-      MzPoint3 (bottom-left), MzPoint4 (top-left)
-    """
-    cx = (v[0].x + v[1].x + v[2].x + v[3].x) / 4
-    cy = (v[0].y + v[1].y + v[2].y + v[3].y) / 4
-    cz = (v[0].z + v[1].z + v[2].z + v[3].z) / 4
-
-    # Width = horizontal distance along wall bottom edge
-    dx = v[1].x - v[2].x
-    dz = v[1].z - v[2].z
-    width = math.sqrt(dx * dx + dz * dz)
-
-    # Height = vertical extent
-    height = abs(v[0].y - v[1].y)
-    if height < 0.01:
-        height = 2.0
-
-    # Rotation around Y axis
-    angle_y = -math.degrees(math.atan2(dx, dz))
-
-    if texture is not None:
-        col = color.white  # let texture show through
-    else:
-        col = color.rgb(
-            int(wall_color.r * 180),
-            int(wall_color.g * 200),
-            int(wall_color.b * 160),
-        )
-
-    # Front face (with collider for collision detection)
-    _track(Entity(
-        model='quad',
-        texture=texture,
-        color=col,
-        position=(cx, cy, cz),
-        scale=(width, height),
-        rotation_y=angle_y,
-        unlit=True,
-        collider='box',
-    ))
-    # Back face (visual only, no collider needed)
-    _track(Entity(
-        model='quad',
-        texture=texture,
-        color=col,
-        position=(cx, cy, cz),
-        scale=(width, height),
-        rotation_y=angle_y + 180,
-        unlit=True,
-    ))
-
-
-def build_curved_wall(cw, texture, wall_color):
-    """Create an Entity for a CurvedWall using its geometry vertices and triangle indices."""
-    if not cw.geometry_verts or not cw.indices:
-        return
-
-    verts = [UVec3(v.x, v.y, v.z) for v in cw.geometry_verts]
-    uvs = cw.geometry_uvs if cw.geometry_uvs else None
-
-    if texture is not None:
-        col = color.white
-    else:
-        col = color.rgb(
-            int(wall_color.r * 180),
-            int(wall_color.g * 200),
-            int(wall_color.b * 160),
-        )
-
-    mesh = Mesh(vertices=verts, uvs=uvs, triangles=cw.indices, mode='triangle')
-    e = _track(Entity(model=mesh, texture=texture, color=col, unlit=True))
-    e.collider = 'mesh'
-
-    # Back faces (reverse winding for double-sided)
-    back_tris = []
-    for i in range(0, len(cw.indices), 3):
-        if i + 2 < len(cw.indices):
-            back_tris.extend([cw.indices[i], cw.indices[i+2], cw.indices[i+1]])
-    mesh_back = Mesh(vertices=verts, uvs=uvs, triangles=back_tris, mode='triangle')
-    _track(Entity(model=mesh_back, texture=texture, color=col, unlit=True))
-
-
 def build_maze_scene(maze_data: MazeData):
-    """Build all Ursina entities from parsed maze data. Returns the player controller."""
+    """Build all Ursina entities from parsed maze data. Returns (player, collectibles)."""
 
-    # Pre-load textures; fall back to Ursina built-ins if external files fail
+    # ------------------------------------------------------------------
+    # Textures
+    # ------------------------------------------------------------------
     textures = load_textures(maze_data)
     print(f"Loaded {len(textures)}/{len(maze_data.image_paths)} textures")
-    _WALL_TEX  = textures.get(102) or 'brick'   # wall_hedge.jpg or built-in
-    _FLOOR_TEX = textures.get(101) or 'grass'   # ground_grass.jpg or built-in
 
-    # --- Walls ---
+    # Defaults: fall back to Ursina built-ins
+    _wall_tex  = textures.get(102) or 'brick'   # wall_hedge.jpg
+    _floor_tex = textures.get(101) or 'grass'   # ground_grass.jpg
+    _sky_tex   = textures.get(maze_data.settings.skybox_id)  # skybox2.jpg
+
+    # ------------------------------------------------------------------
+    # Lighting (maze_explorer pattern: DirectionalLight + AmbientLight)
+    # ------------------------------------------------------------------
+    sun = _track(DirectionalLight(shadows=False))
+    sun.look_at(UVec3(1, -1, -1))
+    _track(AmbientLight(color=color.rgba(0.5, 0.5, 0.5, 1)))
+
+    # ------------------------------------------------------------------
+    # Walls — solid cubes (maze_explorer style), one entity per wall
+    # texture_scale=(width, height) tiles texture every 1 world unit
+    # ------------------------------------------------------------------
+    wall_count = 0
     for wall in maze_data.walls:
-        if wall.visible and len(wall.vertices) >= 4:
-            tex = textures.get(wall.texture_id) or _WALL_TEX
-            wall_from_vertices(wall.vertices, tex, wall.color)
+        if not wall.visible or len(wall.vertices) < 4:
+            continue
 
-    # --- Curved walls (boundary arcs) ---
-    for cw in maze_data.curved_walls:
-        if cw.visible:
-            tex = textures.get(cw.texture_id) or _WALL_TEX
-            build_curved_wall(cw, tex, cw.color)
-    print(f"Built {len(maze_data.walls)} walls + {len(maze_data.curved_walls)} curved walls")
+        v = wall.vertices
+        cx = sum(p.x for p in v) / 4
+        cy = sum(p.y for p in v) / 4
+        cz = sum(p.z for p in v) / 4
 
-    # --- Floor ---
+        # Horizontal extent (bottom edge)
+        dx = v[1].x - v[2].x
+        dz = v[1].z - v[2].z
+        width = math.sqrt(dx * dx + dz * dz)
+
+        # Vertical extent
+        height = abs(v[0].y - v[1].y)
+        if height < 0.01:
+            height = 2.0
+
+        # Y-axis rotation
+        angle_y = -math.degrees(math.atan2(dx, dz))
+
+        tex = textures.get(wall.texture_id) or _wall_tex
+
+        _track(Entity(
+            model='cube',
+            position=(cx, cy, cz),
+            scale=(width, height, WALL_THICK),
+            rotation_y=angle_y,
+            texture=tex,
+            texture_scale=(width, height),
+            collider='box',
+        ))
+        wall_count += 1
+
+    print(f"Built {wall_count} walls")
+
+    # ------------------------------------------------------------------
+    # Floor — quad with texture_scale for correct tiling
+    # ------------------------------------------------------------------
     for floor in maze_data.floors:
         if not floor.visible or len(floor.vertices) < 4:
             continue
@@ -260,112 +199,115 @@ def build_maze_scene(maze_data: MazeData):
         cz = (min(zs) + max(zs)) / 2
         sx = max(xs) - min(xs)
         sz = max(zs) - min(zs)
-        floor_tex = textures.get(floor.texture_id) or _FLOOR_TEX
+        floor_tex = textures.get(floor.texture_id) or _floor_tex
         _track(Entity(
             model='quad',
-            texture=floor_tex,
-            color=color.white,
             position=(cx, v[0].y, cz),
             scale=(sx, sz),
             rotation_x=90,
-            unlit=True,
+            texture=floor_tex,
+            texture_scale=(sx, sz),
             collider='box',
         ))
 
-    # --- Pre-load unique OBJ models → (mesh, normalize_factor, min_y) ---
-    loaded_models = {}  # model_id -> (mesh, normalize_factor, min_y)
-    all_objects = list(maze_data.static_models) + list(maze_data.dynamic_objects)
-    for obj in all_objects:
-        mid = obj.model_id
+    # ------------------------------------------------------------------
+    # Collectibles (dynamic objects) — star.obj or gold sphere fallback
+    # ------------------------------------------------------------------
+    # Pre-load unique models
+    loaded_models = {}
+    for dobj in maze_data.dynamic_objects:
+        mid = dobj.model_id
         if mid not in loaded_models:
             model_path = maze_data.model_paths.get(mid)
-            if model_path is not None:
+            if model_path:
                 loaded_models[mid] = load_obj_model(model_path)
             else:
                 loaded_models[mid] = (None, 1.0, 0.0)
 
-    # --- Static models ---
-    for sobj in maze_data.static_models:
-        mdl, norm, min_y = loaded_models.get(sobj.model_id, (None, 1.0, 0.0))
-        if mdl is not None:
-            s = sobj.scale * norm
-            y_offset = -min_y * s
-            _track(Entity(
-                model=mdl,
-                color=color.white,
-                scale=s,
-                position=(sobj.position.x, sobj.position.y + y_offset, sobj.position.z),
-                rotation=(sobj.rotation.x, sobj.rotation.y, sobj.rotation.z),
-                unlit=True,
-            ))
-
-    # --- Dynamic objects (collectibles) ---
-    collectibles = []  # list of (entity, dobj) for proximity checking
+    collectibles = []
     for dobj in maze_data.dynamic_objects:
-        # Reload model per instance so destroying one doesn't affect others
-        model_path = maze_data.model_paths.get(dobj.model_id)
-        if model_path is not None:
-            old_af = application.asset_folder
+        if dobj.points_granted <= 0:
+            continue
+
+        # Reload model per instance so individual destroy() works
+        mid = dobj.model_id
+        model_path = maze_data.model_paths.get(mid)
+        mdl = None
+        if model_path:
+            old = application.asset_folder
             application.asset_folder = model_path.parent
             mdl = load_model(model_path.stem)
-            application.asset_folder = old_af
-        else:
-            mdl = None
-        _, norm, min_y = loaded_models.get(dobj.model_id, (None, 1.0, 0.0))
+            application.asset_folder = old
+
+        _, norm, min_y = loaded_models.get(mid, (None, 1.0, 0.0))
+
         if mdl is not None:
             s = dobj.scale * norm
-            y_offset = -min_y * s
+            y_off = -min_y * s
             e = _track(Entity(
                 model=mdl,
-                color=color.white,
+                color=color.gold,
                 scale=s,
-                position=(dobj.position.x, dobj.position.y + y_offset, dobj.position.z),
+                position=(dobj.position.x, dobj.position.y + y_off, dobj.position.z),
                 rotation=(dobj.rotation.x, dobj.rotation.y, dobj.rotation.z),
-                unlit=True,
             ))
         else:
             e = _track(Entity(
                 model='sphere',
-                color=color.yellow,
-                scale=dobj.scale * 0.5,
+                color=color.gold,
+                scale=0.7,
                 position=(dobj.position.x, dobj.position.y + 0.3, dobj.position.z),
-                unlit=True,
             ))
-        if dobj.points_granted > 0:
-            collectibles.append((e, dobj))
+        collectibles.append((e, dobj))
 
-    # --- Start position ---
-    # MazeSuite: floor at Y=-1, walls from Y=-1 to Y=1, player walks at Y≈0
-    # Ursina FirstPersonController: camera at player.y + height
-    # So: player.y = -1 (feet on floor), height = 1.0 → camera at Y=0 (eye level)
-    start_pos = (14, -1, 14)
-    start_angle = 0
+    # ------------------------------------------------------------------
+    # Skybox — Sky() with custom texture if available
+    # ------------------------------------------------------------------
+    if _sky_tex:
+        _track(Sky(texture=_sky_tex))
+        print("  Skybox: skybox2.jpg")
+    else:
+        _track(Sky())
+        print("  Skybox: built-in")
+
+    # ------------------------------------------------------------------
+    # Player — maze_explorer pattern
+    #   Walls span y=-1..+1; player at y=0; camera_pivot.y=0.2
+    #   → camera at y=0.2 (slightly above wall mid-point)
+    # ------------------------------------------------------------------
+    start_x, start_z = 12.0, 12.0
+    start_angle = 0.0
     if maze_data.start_positions:
         sp = maze_data.start_positions[0]
-        start_pos = (sp.position.x, -1, sp.position.z)
+        start_x, start_z = sp.position.x, sp.position.z
         start_angle = sp.angle
 
-    # If angle is 0 (default), auto-face toward maze center
+    # Auto-face toward maze center when angle=0
     if start_angle == 0 and maze_data.floors:
         fv = maze_data.floors[0].vertices
-        cx = sum(v.x for v in fv) / len(fv)
-        cz = sum(v.z for v in fv) / len(fv)
-        dx = cx - start_pos[0]
-        dz = cz - start_pos[2]
-        start_angle = math.degrees(math.atan2(dx, dz))
+        fcx = sum(p.x for p in fv) / len(fv)
+        fcz = sum(p.z for p in fv) / len(fv)
+        start_angle = math.degrees(math.atan2(fcx - start_x, fcz - start_z))
 
-    player = _track(FirstPersonController(
-        position=start_pos,
-        speed=maze_data.settings.move_speed,
-        mouse_sensitivity=UVec3(40, 40, 0),
-    ))
-    player.height = 1.0           # camera at Y = -1 + 1 = 0 (mid-wall)
-    player.camera_pivot.y = 1.0   # update the already-created pivot
-    player.rotation_y = start_angle
-    player.gravity = 0            # flat maze, no falling
+    player = FirstPersonController()
+    player.gravity = 0
     player.cursor.visible = False
+    player.camera_pivot.y = 0.2   # slightly above y=0 mid-wall
+    player.speed = maze_data.settings.move_speed
+    player.position = UVec3(start_x, 0, start_z)
+    player.rotation_y = start_angle
+    mouse.locked = True
 
-    # --- Gamepad support via pygame (Panda3D doesn't detect controllers on macOS) ---
+    # Use maze file FOV (45°)
+    camera.fov = maze_data.settings.field_of_view
+
+    # Track player last so cursor is still alive when player.on_disable runs
+    _track(player)
+    _track(player.cursor)
+
+    # ------------------------------------------------------------------
+    # Gamepad support via pygame
+    # ------------------------------------------------------------------
     import pygame
     pygame.init()
     pygame.joystick.init()
@@ -373,31 +315,27 @@ def build_maze_scene(maze_data: MazeData):
     if pygame.joystick.get_count() > 0:
         _joystick = pygame.joystick.Joystick(0)
         _joystick.init()
-        print(f"  Gamepad: {_joystick.get_name()} ({_joystick.get_numaxes()} axes, {_joystick.get_numbuttons()} buttons)")
+        print(f"  Gamepad: {_joystick.get_name()} ({_joystick.get_numaxes()} axes)")
     else:
         print("  No gamepad detected")
 
     from ursina import time as ursina_time
     STICK_DEADZONE = 0.2
     LOOK_SPEED = 3.0
-
     _original_update = player.update
 
     def _gamepad_update():
         _original_update()
-
         if _joystick is None:
             return
-        pygame.event.pump()  # process pygame events
+        pygame.event.pump()
 
-        # Left stick: axis 0 = X (strafe), axis 1 = Y (forward/back)
         lx = _joystick.get_axis(0)
         ly = _joystick.get_axis(1)
         if abs(lx) > STICK_DEADZONE or abs(ly) > STICK_DEADZONE:
             from ursina import raycast, Vec3
             move_dir = (
-                player.forward * (-ly)  # forward is -Y on stick
-                + player.right * lx
+                player.forward * (-ly) + player.right * lx
             ).normalized()
             pos = player.position + Vec3(0, 1, 0)
             if not raycast(pos, move_dir, distance=0.5,
@@ -405,8 +343,6 @@ def build_maze_scene(maze_data: MazeData):
                            ignore=player.ignore_list).hit:
                 player.position += move_dir * ursina_time.dt * player.speed
 
-        # Right stick: axis 2 = X (yaw), axis 3 = Y (pitch)
-        # (Xbox Series X: axes 2,3 for right stick — may vary)
         rx = _joystick.get_axis(2) if _joystick.get_numaxes() > 2 else 0
         ry = _joystick.get_axis(3) if _joystick.get_numaxes() > 3 else 0
         if abs(rx) > STICK_DEADZONE:
@@ -418,18 +354,12 @@ def build_maze_scene(maze_data: MazeData):
 
     player.update = _gamepad_update
 
-    # --- Skybox ---
-    skybox_path = maze_data.image_paths.get(maze_data.settings.skybox_id)
-    if skybox_path is not None:
-        build_skybox(skybox_path)
-    else:
-        print("  [info] No skybox texture, using background color")
-
     return player, collectibles
 
 
 def run_maze(maz_filepath: str):
-    """Load a .maz file and run the interactive 3D maze."""
+    """Load a .maz file and run the interactive 3D maze (standalone mode)."""
+    from ursina import Ursina, window
     maze_data = parse_maz(maz_filepath)
     resolve_assets(maze_data, maz_filepath)
 
@@ -439,65 +369,38 @@ def run_maze(maz_filepath: str):
         print(f"Start: ({sp.position.x:.1f}, {sp.position.z:.1f}) angle={sp.angle}")
 
     app = Ursina(title='MazeWalker-Py', borderless=False, size=(1024, 768))
-    window.color = color.rgb(135, 206, 235)  # sky blue
     window.fps_counter.enabled = True
 
     player, collectibles = build_maze_scene(maze_data)
 
-    # --- Game state ---
     exit_threshold = maze_data.settings.exit_threshold
-    state = {
-        'points': 0,
-        'completed': False,
-    }
+    state = {'points': 0, 'completed': False}
 
-    # --- HUD ---
     if maze_data.settings.start_message:
-        msg = Text(
-            text=maze_data.settings.start_message,
-            origin=(0, 0),
-            scale=1.5,
-            color=color.white,
-        )
+        msg = Text(text=maze_data.settings.start_message, origin=(0, 0), scale=1.5, color=color.white)
         invoke(destroy, msg, delay=3)
 
     score_text = Text(
         text=f'Stars: 0 / {exit_threshold}',
-        position=(-0.85, 0.45),
-        scale=1.5,
-        color=color.yellow,
+        position=(-0.85, 0.45), scale=1.5, color=color.yellow,
     )
-    pos_text = Text(text='', position=(-0.85, 0.40), scale=1)
 
     class GameUpdater(Entity):
         def update(self):
-            # --- Collectible proximity check ---
-            for item in collectibles[:]:  # iterate copy so we can remove
+            for item in collectibles[:]:
                 entity, dobj = item
                 dx = player.x - entity.x
                 dz = player.z - entity.z
-                dist = math.sqrt(dx * dx + dz * dz)
-                if dist < dobj.trigger_radius:
-                    # Collect!
+                if math.sqrt(dx * dx + dz * dz) < dobj.trigger_radius:
                     state['points'] += dobj.points_granted
                     score_text.text = f'Stars: {state["points"]} / {exit_threshold}'
                     destroy(entity)
                     collectibles.remove(item)
-                    print(f'  Collected! Points: {state["points"]}/{exit_threshold}')
-
-                    # Check completion
+                    print(f'  Collected! {state["points"]}/{exit_threshold}')
                     if state['points'] >= exit_threshold and not state['completed']:
                         state['completed'] = True
-                        score_text.text = f'COMPLETE! All {exit_threshold} Stars Collected!'
-                        score_text.scale = 2
+                        score_text.text = f'COMPLETE! All {exit_threshold} collected!'
                         score_text.color = color.lime
-                        print('  === Mission Complete! ===')
-
-            # --- HUD update ---
-            pos_text.text = (
-                f'x={player.x:.1f}  z={player.z:.1f}  '
-                f'angle={player.rotation_y:.0f}'
-            )
             if held_keys['escape']:
                 application.quit()
 
