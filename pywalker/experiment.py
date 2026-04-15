@@ -235,7 +235,8 @@ class Experiment(Entity):
 
         # Parse and build scene
         self.maze_data = parse_maz(maz_file)
-        resolve_assets(self.maze_data, maz_file)
+        _library_dir = Path(__file__).parent.parent / 'Library'
+        resolve_assets(self.maze_data, maz_file, library_dir=str(_library_dir))
         self.player, self.collectibles = build_maze_scene(self.maze_data)
 
         # Reset game state
