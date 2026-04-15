@@ -16,19 +16,31 @@ except ImportError:
     _U3_AVAILABLE = False
 
 # Trigger code constants (4-bit compatible: 1-15)
-TRIG_FIXATION        = 1
-TRIG_MAZE_START      = 2
-TRIG_COLLECT_BASE    = 3
-TRIG_TRIAL_COMPLETE  = 11
-TRIG_TRIAL_ESCAPE    = 12
+TRIG_FIXATION         = 1
+TRIG_MAZE_START_EASY  = 2
+TRIG_MAZE_START_HARD  = 3
+TRIG_EASY_STAR_1      = 4   # easy condition: only 1 star
+TRIG_HARD_STAR_1      = 5   # hard condition: star 1 of 3
+TRIG_HARD_STAR_2      = 6
+TRIG_HARD_STAR_3      = 7
+TRIG_TRIAL_COMPLETE   = 8
+TRIG_TRIAL_ESCAPE     = 9
+TRIG_BLOCK_REST_START = 10
+TRIG_BLOCK_REST_END   = 11
 
 _FIO1_BIT = 0x02  # always OR into the value so FIO1 is always ON
 
 
-def star_trigger(star_index: int) -> int:
-    """Return trigger code for collecting a star (0-indexed: star 0 → code 3)."""
-    code = TRIG_COLLECT_BASE + star_index
-    return min(code, 10)
+def star_trigger(condition: str, star_index: int) -> int:
+    """Return trigger code for collecting a star.
+
+    condition: 'easy' or 'hard'
+    star_index: 0-indexed (0 = first star)
+    """
+    if condition == 'easy':
+        return TRIG_EASY_STAR_1
+    else:
+        return [TRIG_HARD_STAR_1, TRIG_HARD_STAR_2, TRIG_HARD_STAR_3][min(star_index, 2)]
 
 
 class EEGTriggerDebug:
@@ -118,13 +130,17 @@ if __name__ == '__main__':
     import time
     trig = EEGTriggerDebug(pulse_ms=500, bits=4, verbose=True)
     codes = [
-        (TRIG_FIXATION,       'Fixation onset'),
-        (TRIG_MAZE_START,     'Maze start'),
-        (star_trigger(0),     'Star 1'),
-        (star_trigger(1),     'Star 2'),
-        (star_trigger(2),     'Star 3'),
-        (TRIG_TRIAL_COMPLETE, 'Trial complete'),
-        (TRIG_TRIAL_ESCAPE,   'Trial escape'),
+        (TRIG_FIXATION,         'Fixation onset'),
+        (TRIG_MAZE_START_EASY,  'Maze start — easy'),
+        (TRIG_MAZE_START_HARD,  'Maze start — hard'),
+        (TRIG_EASY_STAR_1,      'Easy: star 1'),
+        (TRIG_HARD_STAR_1,      'Hard: star 1'),
+        (TRIG_HARD_STAR_2,      'Hard: star 2'),
+        (TRIG_HARD_STAR_3,      'Hard: star 3'),
+        (TRIG_TRIAL_COMPLETE,   'Trial complete'),
+        (TRIG_TRIAL_ESCAPE,     'Trial escape'),
+        (TRIG_BLOCK_REST_START, 'Block rest start'),
+        (TRIG_BLOCK_REST_END,   'Block rest end'),
     ]
     for code, label in codes:
         print(f'--- {label} ---')

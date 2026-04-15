@@ -5,11 +5,17 @@ Sends an N-bit value on FIO pins, holds for pulse_ms, then resets to 0.
 Falls back to console print if LabJack is not connected or not installed.
 
 Trigger codes (4-bit scheme, max value 15):
-    1     — fixation onset
-    2     — maze start
-    3-10  — star 1-8 collected (3 + star_index, 0-indexed)
-    11    — trial complete (all stars)
-    12    — trial ended via ESC
+    1  — fixation onset
+    2  — maze start (easy)
+    3  — maze start (hard)
+    4  — easy: star 1 collected
+    5  — hard: star 1 collected
+    6  — hard: star 2 collected
+    7  — hard: star 3 collected
+    8  — trial complete
+    9  — trial ended via ESC
+    10 — block rest start
+    11 — block rest end
 """
 
 import gc
@@ -46,20 +52,29 @@ def release_all_labjack() -> int:
     return closed
 
 # Trigger code constants (4-bit compatible: 1-15)
-TRIG_FIXATION        = 1
-TRIG_MAZE_START      = 2
-TRIG_COLLECT_BASE    = 3    # + star_index (0-indexed), so star 1 = 3, star 8 = 10
-TRIG_TRIAL_COMPLETE  = 11
-TRIG_TRIAL_ESCAPE    = 12
+TRIG_FIXATION         = 1
+TRIG_MAZE_START_EASY  = 2
+TRIG_MAZE_START_HARD  = 3
+TRIG_EASY_STAR_1      = 4   # easy condition: only 1 star
+TRIG_HARD_STAR_1      = 5   # hard condition: star 1 of 3
+TRIG_HARD_STAR_2      = 6
+TRIG_HARD_STAR_3      = 7
+TRIG_TRIAL_COMPLETE   = 8
+TRIG_TRIAL_ESCAPE     = 9
+TRIG_BLOCK_REST_START = 10
+TRIG_BLOCK_REST_END   = 11
 
 
-def star_trigger(star_index: int) -> int:
-    """Return trigger code for collecting a star (0-indexed: star 0 → code 3)."""
-    code = TRIG_COLLECT_BASE + star_index
-    if code > 10:
-        # Clamp to max star code if more than 8 stars
-        return 10
-    return code
+def star_trigger(condition: str, star_index: int) -> int:
+    """Return trigger code for collecting a star.
+
+    condition: 'easy' or 'hard'
+    star_index: 0-indexed (0 = first star)
+    """
+    if condition == 'easy':
+        return TRIG_EASY_STAR_1
+    else:
+        return [TRIG_HARD_STAR_1, TRIG_HARD_STAR_2, TRIG_HARD_STAR_3][min(star_index, 2)]
 
 
 class EEGTrigger:
