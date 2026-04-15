@@ -255,20 +255,22 @@ def build_curved_wall(cw, texture, wall_color):
 def build_maze_scene(maze_data: MazeData):
     """Build all Ursina entities from parsed maze data. Returns the player controller."""
 
-    # Pre-load textures
+    # Pre-load textures; fall back to Ursina built-ins if external files fail
     textures = load_textures(maze_data)
     print(f"Loaded {len(textures)}/{len(maze_data.image_paths)} textures")
+    _WALL_TEX  = textures.get(102) or 'brick'   # wall_hedge.jpg or built-in
+    _FLOOR_TEX = textures.get(101) or 'grass'   # ground_grass.jpg or built-in
 
     # --- Walls ---
     for wall in maze_data.walls:
         if wall.visible and len(wall.vertices) >= 4:
-            tex = textures.get(wall.texture_id)
+            tex = textures.get(wall.texture_id) or _WALL_TEX
             wall_from_vertices(wall.vertices, tex, wall.color)
 
     # --- Curved walls (boundary arcs) ---
     for cw in maze_data.curved_walls:
         if cw.visible:
-            tex = textures.get(cw.texture_id)
+            tex = textures.get(cw.texture_id) or _WALL_TEX
             build_curved_wall(cw, tex, cw.color)
     print(f"Built {len(maze_data.walls)} walls + {len(maze_data.curved_walls)} curved walls")
 
@@ -283,15 +285,14 @@ def build_maze_scene(maze_data: MazeData):
         cz = (min(zs) + max(zs)) / 2
         sx = max(xs) - min(xs)
         sz = max(zs) - min(zs)
-        floor_tex = textures.get(floor.texture_id)
+        floor_tex = textures.get(floor.texture_id) or _FLOOR_TEX
         _track(Entity(
             model='quad',
             texture=floor_tex,
-            color=color.white if floor_tex else color.rgb(100, 160, 80),
+            color=color.white,
             position=(cx, v[0].y, cz),
             scale=(sx, sz),
-            rotation_x=90,  # lay flat
-            texture_scale=(sx, sz) if floor_tex else (1, 1),
+            rotation_x=90,
             unlit=True,
             collider='box',
         ))
