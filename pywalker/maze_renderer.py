@@ -42,65 +42,21 @@ def clear_maze_scene():
 
 
 def build_skybox(skybox_texture_path: Path):
-    """
-    Build a sky dome from a MazeSuite cross-layout cubemap texture.
-
-    Extracts the middle panoramic strip (row 1: right/back/left/front)
-    and wraps it onto Ursina's built-in sky_dome model.
-    """
-    import tempfile
-    from PIL import Image
+    """Build sky — use Ursina built-in Sky() like ex5."""
     from ursina import Sky
-
-    if not skybox_texture_path.exists() or skybox_texture_path.stat().st_size == 0:
-        print(f"  [skip] Skybox texture missing: {skybox_texture_path.name}")
-        # Fallback: solid color sky
-        _track(Sky(color=color.rgb(135, 206, 235)))
-        return
-
-    img = Image.open(skybox_texture_path)
-    w, h = img.size
-    fw, fh = w // 4, h // 3
-
-    # Extract the panoramic strip (middle row: right, back, left, front)
-    # and stitch into a panorama in the order the dome expects
-    panorama = Image.new('RGB', (4 * fw, fh))
-    # Sky dome wraps left-to-right: front, right, back, left
-    # Cross layout row 1 is:  col0=right, col1=back, col2=left, col3=front
-    order = [3, 0, 1, 2]  # front, right, back, left
-    for i, col in enumerate(order):
-        face = img.crop((col * fw, 1 * fh, (col + 1) * fw, 2 * fh))
-        panorama.paste(face, (i * fw, 0))
-
-    tmp_dir = Path(tempfile.mkdtemp(prefix='maze_skybox_'))
-    pano_path = tmp_dir / 'sky_panorama.png'
-    panorama.save(pano_path)
-
-    tex = load_texture(name='sky_panorama', path=str(tmp_dir))
-    if tex:
-        _track(Sky(texture=tex))
-        print(f"  Skybox loaded from {skybox_texture_path.name}")
-    else:
-        print(f"  [warn] Failed to load skybox panorama, using solid color")
-        _track(Sky(color=color.rgb(135, 206, 235)))
+    _track(Sky())
+    print("  Skybox: built-in sky")
 
 
 def load_textures(maze_data: MazeData) -> dict:
-    """Pre-load all textures from resolved paths. Returns {texture_id: Texture}."""
+    """Return {texture_id: path_string} for resolved textures."""
     textures = {}
     for img_id, path in maze_data.image_paths.items():
-        if not path.exists() or path.stat().st_size == 0:
-            print(f"  [skip] Empty or missing texture: {path.name}")
-            continue
-        try:
-            tex = load_texture(str(path))
-            if tex:
-                textures[img_id] = tex
-                print(f"  [ok] Loaded texture: {path.name}")
-            else:
-                print(f"  [warn] load_texture returned None: {path.name}")
-        except Exception as e:
-            print(f"  [warn] Failed to load texture {path.name}: {e}")
+        if path.exists() and path.stat().st_size > 0:
+            textures[img_id] = str(path)
+            print(f"  [ok] Texture path: {path.name}")
+        else:
+            print(f"  [skip] Missing texture: {path.name}")
     return textures
 
 
