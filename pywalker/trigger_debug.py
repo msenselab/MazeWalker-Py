@@ -15,32 +15,15 @@ try:
 except ImportError:
     _U3_AVAILABLE = False
 
-# Trigger code constants (4-bit compatible: 1-15)
-TRIG_FIXATION         = 1
-TRIG_MAZE_START_EASY  = 2
-TRIG_MAZE_START_HARD  = 3
-TRIG_EASY_STAR_1      = 4   # easy condition: only 1 star
-TRIG_HARD_STAR_1      = 5   # hard condition: star 1 of 3
-TRIG_HARD_STAR_2      = 6
-TRIG_HARD_STAR_3      = 7
-TRIG_TRIAL_COMPLETE   = 8
-TRIG_TRIAL_ESCAPE     = 9
-TRIG_BLOCK_REST_START = 10
-TRIG_BLOCK_REST_END   = 11
+from pywalker.trigger import (
+    TRIG_FIXATION, TRIG_MAZE_START_EASY, TRIG_MAZE_START_HARD,
+    TRIG_EASY_STAR_1, TRIG_HARD_STAR_1, TRIG_HARD_STAR_2, TRIG_HARD_STAR_3,
+    TRIG_TRIAL_COMPLETE, TRIG_TRIAL_ESCAPE,
+    TRIG_BLOCK_REST_START, TRIG_BLOCK_REST_END,
+    star_trigger,
+)
 
 _FIO1_BIT = 0x02  # always OR into the value so FIO1 is always ON
-
-
-def star_trigger(condition: str, star_index: int) -> int:
-    """Return trigger code for collecting a star.
-
-    condition: 'easy' or 'hard'
-    star_index: 0-indexed (0 = first star)
-    """
-    if condition == 'easy':
-        return TRIG_EASY_STAR_1
-    else:
-        return [TRIG_HARD_STAR_1, TRIG_HARD_STAR_2, TRIG_HARD_STAR_3][min(star_index, 2)]
 
 
 class EEGTriggerDebug:

@@ -71,6 +71,8 @@ def star_trigger(condition: str, star_index: int) -> int:
     condition: 'easy' or 'hard'
     star_index: 0-indexed (0 = first star)
     """
+    if condition not in ('easy', 'hard'):
+        raise ValueError(f"star_trigger: unknown condition {condition!r}")
     if condition == 'easy':
         return TRIG_EASY_STAR_1
     else:
