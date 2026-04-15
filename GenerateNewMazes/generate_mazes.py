@@ -303,7 +303,17 @@ def main():
     ap.add_argument('--output-dir', default='mazes',        help='Output folder')
     ap.add_argument('--tolerance',  type=int, default=3,    help='±cells from target dist')
     ap.add_argument('--calibration', type=int, default=200, help='Calibration sample size')
+    ap.add_argument('--num-stars', type=int, default=3,
+                    help='Number of stars per maze (default: 3)')
+    ap.add_argument('--prefix', default='Maze',
+                    help='Filename prefix (default: Maze)')
     args = ap.parse_args()
+
+    global NUM_STARS, MIN_STAR_SEPARATION, MIN_STAR_DISTANCE
+    NUM_STARS = args.num_stars
+    if NUM_STARS == 1:
+        MIN_STAR_SEPARATION = 0   # irrelevant with 1 star
+        MIN_STAR_DISTANCE   = 2   # easier to place 1 star
 
     n = GRID_SIZE
     out = Path(args.output_dir)
@@ -359,7 +369,7 @@ def main():
         dists.append(total)
         all_star_dists.extend(sdists)
 
-        path = out / f'Maze{i:03d}.maz'
+        path = out / f'{args.prefix}{i:03d}.maz'
         label = f'n={n} seed={seed} total_dist={total} stars={sdists}'
         root = build_maz_xml(n, h, v, stars, label)
         path.write_text(to_xml(root), encoding='utf-8')
@@ -381,7 +391,7 @@ def main():
     print(f'  Star distances: mean={sm:.1f}  SD={ssd:.1f}  '
           f'range=[{min(all_star_dists)}, {max(all_star_dists)}]')
     print(f'  Rejection rate: {rej:.1f}%')
-    print(f'  Files: {out}/Maze001.maz … Maze{args.count:03d}.maz')
+    print(f'  Files: {out}/{args.prefix}001.maz … {args.prefix}{args.count:03d}.maz')
 
     n_old = 8
     n_new_per_block = n_old
