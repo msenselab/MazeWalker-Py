@@ -93,7 +93,7 @@ def load_textures(maze_data: MazeData) -> dict:
             print(f"  [skip] Empty or missing texture: {path.name}")
             continue
         try:
-            tex = load_texture(name=path.stem, path=path.parent)
+            tex = load_texture(str(path))
             if tex:
                 textures[img_id] = tex
                 print(f"  [ok] Loaded texture: {path.name}")
@@ -148,10 +148,7 @@ def load_obj_model(model_path: Path):
     """
     try:
         _fix_mtl_tabs(model_path)  # fix tab-separated MTL values
-        model = load_model(
-            name=model_path.stem,
-            path=Path(model_path.parent),
-        )
+        model = load_model(str(model_path.with_suffix('')))
         if model:
             extent, min_y = _obj_bounds(model_path)
             normalize = 1.0 / extent if extent > 0 else 1.0
@@ -330,7 +327,7 @@ def build_maze_scene(maze_data: MazeData):
         # Reload model per instance so destroying one doesn't affect others
         model_path = maze_data.model_paths.get(dobj.model_id)
         if model_path is not None:
-            mdl = load_model(name=model_path.stem, path=Path(model_path.parent))
+            mdl = load_model(str(model_path.with_suffix('')))
         else:
             mdl = None
         _, norm, min_y = loaded_models.get(dobj.model_id, (None, 1.0, 0.0))
