@@ -92,3 +92,15 @@ Events: `collect_1`, `collect_2`, etc. when stars are collected.
 ## Origin
 
 Migrated from the C++ [MazeWalker](https://github.com/AyazLab/MazeSuite) (part of MazeSuite by Ayaz Lab) to enable integration with Python-based experiment tools and EEG/fNIRS systems.
+
+## License
+
+The MazeWalker-Py source code is released under the [MIT License](LICENSE) as an Open Educational Resource. Maze files, textures, models and audio that come from MazeSuite (e.g. the contents of `Library/`) remain under their original terms.
+
+## Funding
+
+<img src="docs/img/eu-cofunded.png" alt="Co-funded by the European Union" height="60">
+
+Developed within the EyeCon VR/AR Lab, Erasmus+ project 2025-1-DE02-KA210-VET-000357923 ([xr4vet.eu](https://xr4vet.eu/)).
+
+Funded by the European Union. Views and opinions expressed are however those of the author(s) only and do not necessarily reflect those of the European Union or the European Education and Culture Executive Agency (EACEA). Neither the European Union nor EACEA can be held responsible for them.
